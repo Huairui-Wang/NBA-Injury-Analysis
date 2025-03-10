@@ -1,0 +1,1162 @@
+---
+title: "FINAL_Data_Clean"
+output: html_document
+date: "2024-12-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+# 1. Load packages
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+```
+
+# 2. Load data
+
+```{r}
+injury_data <- read.csv('all_data/NBA_Injury.csv')
+All_RegSs_Per_Games <- read.csv('all_data/NBA_All_Seasons_Regular_Season_Per_Games.csv')
+All_RegSs_Totals <- read.csv('all_data/NBA_All_Seasons_Regular_Season_Totals.csv')
+```
+
+```{r}
+player_data <- read.csv('NBA_player_data/player_data.csv')
+players <- read.csv('NBA_player_data/players.csv')
+Seasons_Stats <- read.csv('NBA_player_data/Seasons_Stats.csv')
+
+```
+
+
+# 3. Data Clean: Injury Data
+
+```{r}
+# Check the contents of the 'Notes' column
+head(injury_data$Notes, 10)
+```
+## 3.1. Key Words
+
+### 3.1.1. Pre-processing of note
+
+```{r}
+# Extraction of all words
+notes <- injury_data$Notes[!is.na(injury_data$Notes)]
+words <- unlist(str_extract_all(tolower(notes), "\\b\\w+\\b"))
+```
+
+```{r}
+# Check for duplicate elements
+duplicated_elements <- words[duplicated(words)]
+# Output duplicate elements
+#unique(duplicated_elements)
+```
+
+
+```{r}
+# summrize frequency of keywords
+word_counts <- sort(table(words), decreasing = TRUE)
+head(word_counts, 20)
+
+```
+
+### 3.1.2. Define injury type
+
+
+```{r}
+# Define two types of keywords
+injury_methods <- list(
+  "Sprains" = c("\\bsprain\\b", "\\bsprained\\b"),
+  "Strains" = c("\\bstrain\\b", "\\bstrained\\b"),
+  "Soreness" = c("\\bsore\\b"),
+  "Fractures" = c("\\bfracture\\b", "\\bfractured\\b", "\\bbroken\\b"),
+  "Overuse Injuries" = c("\\boveruse\\b", "\\btendinitis\\b", "\\bbursitis\\b", "\\bstress fracture\\b"),
+  "Inflammation" = c("\\binflammation\\b", "\\bswelling\\b", "\\bitis\\b"),
+  "Ligament Tears" = c("\\btear\\b", "\\bacl\\b", "\\bmcl\\b", "\\blcl\\b", "\\bpcl\\b"),
+  "Fatigue" = c("\\bfatigue\\b", "\\bovertraining\\b", "\\bburnout\\b")
+)
+
+injury_locations <- list(
+  "Back Issues" = c("\\bback\\b"),
+  "Knee Issues" = c("\\bknee\\b"),
+  "Tendon Issues" = c("\\bachilles\\b", "\\btendon\\b", "\\bachilles tendon\\b"),
+  "Ankle Issues" = c("\\bankle\\b"),
+  "Shoulder Issues" = c("\\bshoulder\\b"),
+  "Wrist Issues" = c("\\bwrist\\b"),
+  "Elbow Issues" = c("\\belbow\\b"),
+  "Hand Issues" = c("\\bhand\\b", "\\bfinger\\b"),
+  "Foot Issues" = c("\\bfoot\\b", "\\btoe\\b",  "\\bheel\\b"),
+  "Head Issues" = c("\\bhead\\b", "\\bconcussion\\b"),
+  "Hip Issues" = c("\\bhip\\b", "\\bgroin\\b", "\\bpelvis\\b"),
+  "Neck Issues" = c("\\bneck\\b", "\\bcervical\\b", "\\bwhiplash\\b"),
+  "Leg Issues" = c("\\bleg\\b", "\\bcalf\\b", "\\bthigh\\b", "\\bhamstring\\b", "\\bquad\\b"),
+  "Arm Issues" = c("\\barm\\b", "\\bforearm\\b", "\\bbicep\\b", "\\btricep\\b")
+)
+
+# define other injuries
+injuries_keywords <- c("\\binjury\\b", "\\binjuries\\b", "\\bminor injury\\b", "\\bgeneral injury\\b", "\\bhurt\\b")
+
+```
+
+
+### 3.1.3. Create new columns: Injuries tab
+
+```{r}
+# extract notes as a df
+notes_with_labels <- data.frame(Notes = notes)  
+
+# Initialize two new columns
+notes_with_labels$Injury_Method <- NA
+notes_with_labels$Injury_Location <- NA
+# Initialize new column `Other_Injury` to NA
+notes_with_labels$Other_Injury <- NA
+
+# Marking the injury method
+for (method in names(injury_methods)) {
+  notes_with_labels$Injury_Method[is.na(notes_with_labels$Injury_Method) & 
+    sapply(notes_with_labels$Notes, function(note) {
+      any(grepl(paste(injury_methods[[method]], collapse = "|"), note, ignore.case = TRUE))
+    })
+  ] <- method
+}
+
+# Marking the injury location
+for (location in names(injury_locations)) {
+  notes_with_labels$Injury_Location[is.na(notes_with_labels$Injury_Location) & 
+    sapply(notes_with_labels$Notes, function(note) {
+      any(grepl(paste(injury_locations[[location]], collapse = "|"), note, ignore.case = TRUE))
+    })
+  ] <- location
+}
+
+# Check the unmarked records
+unclassified_notes <- is.na(notes_with_labels$Injury_Method) & is.na(notes_with_labels$Injury_Location)
+
+# Check for the keyword “Injuries” in Uncategorized Notes.
+notes_with_labels$Other_Injury[unclassified_notes & 
+  sapply(notes_with_labels$Notes, function(note) {
+    any(grepl(paste(injuries_keywords, collapse = "|"), note, ignore.case = TRUE))
+  })
+] <- "Other"
+
+# Mark unmatched rows as NA
+notes_with_labels$Other_Injury[is.na(notes_with_labels$Other_Injury)] <- NA
+
+# View Results
+#head(notes_with_labels, 10)
+
+```
+
+```{r}
+injury_data$Injury_Method <- notes_with_labels$Injury_Method
+injury_data$Injury_Location <- notes_with_labels$Injury_Location
+injury_data$Other_Injury <- notes_with_labels$Other_Injury
+
+```
+
+## 3.2. Visualization
+
+### 3.2.1. Table
+
+```{r}
+# Frequency of Injury_Method and Injury_Location after exclusion of NA values
+method_table <- table(notes_with_labels$Injury_Method, useNA = "no")  # summarize injury method
+location_table <- table(notes_with_labels$Injury_Location, useNA = "no")  # summarize injury location
+```
+
+
+### 3.2.2. Histogram
+
+```{r}
+# Table of distribution of methods of injury
+method_df <- as.data.frame(method_table)
+colnames(method_df) <- c("Method", "Count")
+
+# Plotting Histogram of the distribution of injury methods
+method_plot <- ggplot(method_df, aes(x = reorder(Method, Count), y = Count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +  # Horizontal bar chart
+  geom_text(aes(label = Count), hjust = -0.2) +  # Labeling values at the top of bars
+  expand_limits(y = max(method_df$Count) * 1.2) +  # x-axis range increased by 20%
+  labs(title = "Distribution of Injury Methods", x = "Injury Method", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10))
+
+# Table of Distribution of Injured Location
+location_df <- as.data.frame(location_table)
+colnames(location_df) <- c("Location", "Count")
+
+# Plotting Histogram of the distribution of injury location
+location_plot <- ggplot(location_df, aes(x = reorder(Location, Count), y = Count)) +
+  geom_bar(stat = "identity", fill = "darkorange") +
+  coord_flip() +  ## Horizontal bar chart
+  geom_text(aes(label = Count), hjust = -0.2) +  # Labeling values at the top of bars
+  expand_limits(y = max(location_df$Count) * 1.2) +  # x-axis range increased by 20%
+  labs(title = "Distribution of Injury Locations", x = "Injury Location", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10))
+
+# # Merge the two diagrams
+# combined_plot <- plot_grid(
+#   method_plot, location_plot,
+#   ncol = 1,  # One column arrangement (top and bottom layout)
+#   align = "v",  # vertical alignment
+#   labels = c("A", "B")  # Adding subgraph labels
+# )
+
+print(method_plot)
+print(location_plot)
+
+```
+
+
+## 3.3. Remove NA rows
+
+
+```{r}
+# Delete all rows with NA
+injury_data_cleaned <- injury_data[!(is.na(injury_data$Injury_Method) &
+                                     is.na(injury_data$Injury_Location) &
+                                     is.na(injury_data$Other_Injury)), ]
+
+#head(injury_data_cleaned, 10)  
+
+```
+
+## 3.4. Check existing df
+
+### 3.4.1. View Injury Data
+
+
+```{r}
+# Inspection results
+cat("Remaining rows:", nrow(injury_data_cleaned), "\n")
+
+# Counts the number of rows where only Injury_Method has a value
+only_method <- sum(!is.na(injury_data_cleaned$Injury_Method) & 
+                   is.na(injury_data_cleaned$Injury_Location) & 
+                   is.na(injury_data_cleaned$Other_Injury))
+
+# Counts the number of rows where only Injury_Location has a value
+only_location <- sum(is.na(injury_data_cleaned$Injury_Method) & 
+                     !is.na(injury_data_cleaned$Injury_Location) & 
+                     is.na(injury_data_cleaned$Other_Injury))
+
+# Counts the number of rows where only Other_Injury has a value
+only_other <- sum(is.na(injury_data_cleaned$Injury_Method) & 
+                  is.na(injury_data_cleaned$Injury_Location) & 
+                  !is.na(injury_data_cleaned$Other_Injury))
+
+cat("The number of rows where only Injury_Method has a value:", only_method, "\n")
+cat("The number of rows where only Injury_Location has a value:", only_location, "\n")
+cat("The number of rows where only Other_Injury has a value:", only_other, "\n")
+```
+
+### 3.4.2. View Other_Injury
+
+```{r}
+# Filter rows where only Other_Injury has a value
+only_other_rows <- notes_with_labels[
+  !is.na(notes_with_labels$Other_Injury), 
+]
+
+only_other_rows
+```
+
+### 3.4.3. View 'Acquired' column
+
+#### 3.4.3.1. Whether full NA
+
+```{r}
+all(is.na(injury_data_cleaned$Acquired))
+```
+
+#### 3.4.3.2. If all the same
+
+```{r}
+# Get the value of the first row
+first_value <- injury_data_cleaned$Acquired[1]
+
+# Determine if all values are the same as the first row
+all_same <- all(injury_data_cleaned$Acquired == first_value, na.rm = TRUE)
+
+
+if (all_same) {
+  print("All values in this column are the same as the first one")
+} else {
+  print("The values in this column are not exactly the same")
+}
+
+```
+
+#### 3.4.3.3. Remove all spaces
+
+```{r}
+# Remove spaces with gsub()
+injury_data_cleaned$Acquired <- gsub(" ", "", injury_data_cleaned$Acquired)
+table(injury_data_cleaned$Acquired)
+```
+
+
+
+```{r}
+acquired_rows <- injury_data_cleaned[injury_data_cleaned$Acquired %in% c("LazarHayward", "ShaunLivingston"), ]
+acquired_rows
+```
+
+#### 3.4.3.4. Delete these two rows & empty columns
+
+```{r}
+injury_data_cleaned <- injury_data_cleaned[!injury_data_cleaned$Acquired %in% c("ShaunLivingston", "LazarHayward"), ]
+injury_data_cleaned$Acquired <- NULL
+```
+
+## 3.5. Reset line number
+
+```{r}
+rownames(injury_data_cleaned) <- NULL
+injury_data_cleaned$X <- NULL
+```
+
+
+## 3.6. Processing date
+
+```{r}
+# 拆分 Date 列为 Year, Month, Day 三列
+injury_data_cleaned <- injury_data_cleaned %>%
+  separate(Date, into = c("Year", "Month", "Day"), sep = "-")
+```
+
+## 3.7. Organize name of columns
+
+```{r}
+colnames(injury_data_cleaned)[colnames(injury_data_cleaned) == "Relinquished"] <- "Player_Name"
+```
+
+
+# 4. Data CLean: Player Physical Parameters
+
+## 4.1. Height
+
+```{r}
+# Converting Height from Feet-Inches to Centimeters
+convert_height_to_cm <- function(height) {
+  if (!is.na(height) && grepl("-", height)) {
+    parts <- unlist(strsplit(height, "-"))
+    feet <- as.numeric(parts[1])
+    inches <- as.numeric(parts[2])
+    return(round(feet * 30.48 + inches * 2.54, 2))
+  } else {
+    return(NA)
+  }
+}
+
+player_data$height_cm <- sapply(player_data$height, convert_height_to_cm)
+
+```
+
+
+```{r}
+# Outputs rows with NA in the height_cm column
+na_rows_height <- player_data[is.na(player_data$height_cm), ]
+na_rows_height
+```
+
+```{r}
+# Delete original column
+player_data <- player_data[, !colnames(player_data) %in% c("height")]
+```
+
+
+## 4.2. Weight
+
+```{r}
+# Convert weight from pounds to kilograms
+convert_weight_to_kg <- function(weight) {
+  if (!is.na(weight)) {
+    return(round(weight * 0.453592, 2))
+  } else {
+    return(NA)
+  }
+}
+player_data$weight_kg <- sapply(player_data$weight, convert_weight_to_kg)
+```
+
+
+```{r}
+# Outputs rows with NA in the weight_kg column
+na_rows_weight <- player_data[is.na(player_data$weight_kg), ]
+na_rows_weight
+```
+
+```{r}
+# Delete original column
+player_data <- player_data[, !colnames(player_data) %in% c("weight")]
+```
+
+
+## 4.3. Date of birth
+
+
+```{r}
+# Split the date of birth into year, month and day
+split_birth_date <- function(birth_date) {
+  if (!is.na(birth_date) && grepl(",", birth_date)) {
+    parts <- unlist(strsplit(birth_date, " "))
+    birth_year <- parts[3]
+    birth_month <- parts[1]
+    birth_day <- gsub(",", "", parts[2])
+    return(data.frame(birth_year = birth_year, birth_month = birth_month, birth_day = birth_day))
+  } else {
+    return(data.frame(birth_year = NA, birth_month = NA, birth_day = NA))
+  }
+}
+birth_split <- do.call(rbind, lapply(player_data$birth_date, split_birth_date))
+player_data <- cbind(player_data, birth_split)
+```
+
+```{r}
+# Delete original column
+player_data <- player_data[, !colnames(player_data) %in% c("birth_date")]
+```
+
+
+## 4.4. Filter NA
+
+```{r}
+columns_to_check <- c("year_start", "year_end", "position",
+                      "height_cm", "weight_kg",
+                      "birth_year", "birth_month", "birth_day")
+
+# Filter rows containing NA
+player_data_with_na <- player_data[rowSums(is.na(player_data[columns_to_check])) > 0, ]
+
+# Delete these rows from the original data frame
+player_data_cleaned <- player_data[!rowSums(is.na(player_data[columns_to_check])) > 0, ]
+```
+
+```{r}
+player_data_with_na
+```
+
+
+## 4.5. Check if the position is unique
+
+
+### 4.5.1. Discovery of repeat name data (players)
+```{r}
+# Check if each name corresponds to a unique position
+name_position_check <- player_data_cleaned %>%
+  group_by(name) %>%
+  summarise(unique_positions = n_distinct(position)) %>%
+  filter(unique_positions > 1)
+
+# View names with multiple positions
+print(name_position_check)
+```
+
+
+### 4.5.2. Export repeat name data
+```{r}
+# Filter out all rows corresponding to these names in the original data
+multipositon_players <- player_data_cleaned %>%
+  filter(name %in% name_position_check$name)
+
+# View specific rows filtered out
+print(multipositon_players)
+```
+
+### 4.5.3. Determine whether renames overlap in time
+
+#### 4.5.3.1 Find overlapping data
+
+```{r}
+# Define a function to check for overlapping times
+check_overlap <- function(years) {
+  for (i in 1:(nrow(years) - 1)) {
+    if (years$year_end[i] >= years$year_start[i + 1]) {
+      return(TRUE)
+    }
+  }
+  return(FALSE)
+}
+```
+
+
+```{r}
+# Check each name for time overlap
+overlap_rows <- multipositon_players %>%
+  arrange(name, year_start) %>%                # Sort by name and starting year
+  group_by(name) %>%                           # Check each name in groups
+  filter(n() > 1) %>%                          # Filtering names with multiple lines
+  summarise(overlap = check_overlap(pick(everything()))) %>%  
+  # Use pick() instead of cur_data() Use pick() instead of cur_data()
+  filter(overlap == TRUE) %>%
+  select(name)
+```
+
+
+```{r}
+# Output specific rows with time overlap
+multipositon_players_time_overlap <- multipositon_players %>%
+  filter(name %in% overlap_rows$name)
+
+print(multipositon_players_time_overlap)
+```
+
+#### 4.5.3.2. Determine the presence or absence in injury
+
+```{r}
+# Check if df1$name exists in df2$name
+# df1$name %in% df2$name
+multipositon_players_time_overlap$name %in% injury_data_cleaned$Player_Name
+```
+
+# 5. Merge Injury and parameter data
+
+## 5.1. Standardize Name Format
+
+```{r}
+# Standardize name format: remove extra spaces and standardize to lower case
+
+injury_data_cleaned$Player_Name_Cleaned <- tolower(trimws(injury_data_cleaned$Player_Name))
+player_data_cleaned$Player_Name_Cleaned <- tolower(trimws(player_data_cleaned$name))
+
+# Retain only the first two words
+injury_data_cleaned$Player_Name_Cleaned <- sapply(
+  strsplit(injury_data_cleaned$Player_Name_Cleaned, "\\s+"),
+  function(x) paste(x[1:min(2, length(x))], collapse = " ")
+)
+
+player_data_cleaned$Player_Name_Cleaned <- sapply(
+  strsplit(player_data_cleaned$Player_Name_Cleaned, "\\s+"),
+  function(x) paste(x[1:min(2, length(x))], collapse = " ")
+)
+```
+
+
+```{r}
+# Check for name matches
+common_names <- intersect(injury_data_cleaned$Player_Name_Cleaned, player_data_cleaned$Player_Name_Cleaned)
+# Outputs the number of names matched
+length(common_names)
+```
+
+
+## 5.2. For overlap data
+
+### 5.2.1. Standardization of names
+
+```{r}
+multipositon_players_time_overlap$Player_Name_Cleaned <- tolower(trimws(multipositon_players_time_overlap$name))
+
+multipositon_players_time_overlap$Player_Name_Cleaned <- sapply(
+  strsplit(multipositon_players_time_overlap$Player_Name_Cleaned, "\\s+"),
+  function(x) paste(x[1:min(2, length(x))], collapse = " ")
+)
+```
+
+### 5.2.2. View name matches
+
+```{r}
+# Check for name matches
+common_names <- intersect(injury_data_cleaned$Player_Name_Cleaned, multipositon_players_time_overlap$Player_Name_Cleaned)
+# Outputs the number of names matched
+length(common_names)
+```
+
+
+## 5.3. Remove common_names row from player_data
+
+```{r}
+# Retain lines that are not in common_names
+player_data_cleaned <- player_data_cleaned[!player_data_cleaned$Player_Name_Cleaned %in% common_names, ]
+
+```
+
+
+```{r}
+# Check for name matches
+common_names <- intersect(injury_data_cleaned$Player_Name_Cleaned, player_data_cleaned$Player_Name_Cleaned)
+# Output the number of matching names
+length(common_names)
+```
+
+## 5.4. Merge
+
+### 5.4.1. Convert year data types
+
+```{r}
+# Convert injury_data_cleaned$Year to integer type
+injury_data_cleaned <- injury_data_cleaned %>%
+  mutate(Year = as.integer(Year))
+```
+
+
+### 5.4.2. Merge
+
+```{r}
+# Match by name and year range using dplyr's join operation
+merged_data <- injury_data_cleaned %>%
+  left_join(player_data_cleaned, 
+            by = "Player_Name_Cleaned") %>%
+  filter(Year >= year_start & Year <= year_end) # %>%
+  #select(Year, Month, Day, Team, Player_Name, Notes, Injury_Method, 
+         #Injury_Location, Other_Injury, year_start, year_end, position, 
+         #height_cm, weight_kg, birth_year, birth_month, birth_day)
+
+```
+
+
+### 5.4.3. Check the many-to-many
+
+```{r}
+# Check the many-to-many
+multi_match <- injury_data_cleaned %>%
+  left_join(player_data_cleaned, 
+            by = "Player_Name_Cleaned") %>%
+  filter(!is.na(year_start) & Year >= year_start & Year <= year_end) %>%
+  group_by(Player_Name_Cleaned, Year) %>%
+  filter(n() > 1)
+
+# Check these question lines
+#print(multi_match)
+
+```
+
+## 5.5. Tidy after merging
+
+### 5.5.1. Retain only useful columns
+
+```{r}
+merged_data_1 <-  merged_data %>% 
+  select(-Player_Name, -name, -college)
+```
+
+### 5.5.2. Organize data types
+
+```{r}
+merged_data_1$Year <- as.numeric(merged_data_1$Year)
+merged_data_1$Month <- as.numeric(merged_data_1$Month)
+merged_data_1$Day <- as.numeric(merged_data_1$Day)
+```
+
+
+```{r}
+#  merged_data_1$birth_month converted to numeric
+merged_data_1$birth_month <- match(merged_data_1$birth_month, month.name)
+```
+
+```{r}
+merged_data_1$birth_year <- as.numeric(merged_data_1$birth_year)
+merged_data_1$birth_month <- as.numeric(merged_data_1$birth_month)
+merged_data_1$birth_day <- as.numeric(merged_data_1$birth_day)
+```
+
+### 5.5.3. Rename column names
+
+```{r}
+merged_data_1 <- merged_data_1 %>%
+  rename(
+    injury_year = Year,
+    injury_month =  Month,
+    injury_day = Day 
+  )
+```
+
+### 5.5.4. Calculate age
+
+```{r}
+# Create Date of Birth and Date of Injury columns
+merged_data_1$birth_date <- as.Date(with(merged_data_1, paste(birth_year, birth_month, birth_day, sep = "-")), "%Y-%m-%d")
+merged_data_1$injury_date <- as.Date(with(merged_data_1, paste(injury_year, injury_month, injury_day, sep = "-")), "%Y-%m-%d")
+
+# Calculate age and round down
+merged_data_1$age_at_injury <- floor(as.numeric(difftime(merged_data_1$injury_date, merged_data_1$birth_date, units = "days")) / 365.25)
+
+```
+
+### 5.5.5.. Career (Total｜Before Injury｜After Injury)
+
+
+```{r}
+merged_data_1$career_all <- merged_data_1$year_end- merged_data_1$year_start 
+merged_data_1$career_before <- merged_data_1$injury_year- merged_data_1$year_start
+merged_data_1$career_after <- merged_data_1$year_end - merged_data_1$injury_year
+```
+
+### 5.5.6. Reorder columns
+
+```{r}
+merged_data_1 <- merged_data_1 %>%
+  select(birth_date,
+         injury_date, 
+         Player_Name_Cleaned,
+         age_at_injury,
+         height_cm,
+         weight_kg,
+         Team,
+         position,
+         Injury_Method,
+         Injury_Location,
+         Other_Injury,
+         career_before,
+         career_after,
+         career_all,
+         Notes,
+         injury_year,
+         injury_month,
+         injury_day,
+         birth_year,
+         birth_month,
+         birth_day,
+         year_start,
+         year_end
+         )
+
+```
+
+
+
+
+# 6. Player Performance Data
+
+## 6.1. View Basic Information
+
+```{r}
+###
+###The data frame requires the columns to be of the same data type
+###
+
+# Create an empty df to store the results
+result <- data.frame(Column = character(0), Data_Type = character(0), stringsAsFactors = FALSE)
+
+# Loop through each column and get the column name and data type
+for (col_name in names(All_RegSs_Per_Games)) {
+  # Get the data type of the current column
+  data_type <- class(All_RegSs_Per_Games[[col_name]])
+  
+  # Storing results in the results data box
+  result <- rbind(result, data.frame(Column = col_name, Data_Type = data_type, stringsAsFactors = FALSE))
+}
+
+print(result)
+```
+
+```{r}
+###Same to previous
+###数据框要求列是同一种数据类型
+###
+
+# 创建一个空数据框存储结果
+result <- data.frame(Column = character(0), Data_Type = character(0), stringsAsFactors = FALSE)
+
+# 循环每一列，获取列名和数据类型
+for (col_name in names(All_RegSs_Totals)) {
+  # 获取当前列的数据类型
+  data_type <- class(All_RegSs_Totals[[col_name]])
+  
+  # 将结果存储到结果数据框中
+  result <- rbind(result, data.frame(Column = col_name, Data_Type = data_type, stringsAsFactors = FALSE))
+}
+
+print(result)
+```
+
+
+## 6.2. Basic cleaning
+
+### 6.2.1. Clear Position
+
+```{r}
+# Define valid values
+valid_positions <- c("C", "PF", "PG", "SF", "SG")
+
+# replace others as NA
+All_RegSs_Per_Games$Pos <- ifelse(All_RegSs_Per_Games$Pos %in% valid_positions, 
+                                  All_RegSs_Per_Games$Pos, 
+                                  NA)
+
+```
+
+### 6.2.2. Drop columns
+
+```{r}
+All_RegSs_Per_Games <- All_RegSs_Per_Games %>% 
+  select(-Awards)
+
+All_RegSs_Totals <- All_RegSs_Totals %>% 
+  select(-Awards)
+```
+
+
+### 6.2.3. De-duplicate lines
+
+
+
+```{r}
+cat("Before de-duplication, merged_data_1" ,nrow(merged_data_1), "rows.\n")
+cat("Before de-duplication, All_RegSs_Per_Games" ,nrow(All_RegSs_Per_Games), "rows. \n")
+cat("Before de-duplication, All_RegSs_Totals" ,nrow(All_RegSs_Totals), "rows.\n")
+```
+
+
+```{r}
+merged_data_1 <- merged_data_1 %>% distinct()
+All_RegSs_Per_Games <- All_RegSs_Per_Games %>% distinct()
+All_RegSs_Totals <- All_RegSs_Totals %>% distinct()
+cat("After de-duplication, merged_data_1" ,nrow(merged_data_1), "rows.\n")
+cat("After de-duplication, All_RegSs_Per_Games" ,nrow(All_RegSs_Per_Games), "rows.\n")
+cat("After de-duplication, All_RegSs_Totals" ,nrow(All_RegSs_Totals), "rows.\n")
+```
+
+
+## 6.3. Manipulate name columns
+
+### 6.3.1. Standardize names
+
+
+```{r}
+# Standardize name format: remove extra spaces and standardize to lower case
+
+All_RegSs_Per_Games$Player_Name_Cleaned <- tolower(trimws(All_RegSs_Per_Games$Player))
+All_RegSs_Totals$Player_Name_Cleaned <- tolower(trimws(All_RegSs_Totals$Player))
+
+# Retain only the first two words
+All_RegSs_Per_Games$Player_Name_Cleaned <- sapply(
+  strsplit(All_RegSs_Per_Games$Player_Name_Cleaned, "\\s+"),
+  function(x) paste(x[1:min(2, length(x))], collapse = " ")
+)
+
+All_RegSs_Totals$Player_Name_Cleaned <- sapply(
+  strsplit(All_RegSs_Totals$Player_Name_Cleaned, "\\s+"),
+  function(x) paste(x[1:min(2, length(x))], collapse = " ")
+)
+```
+
+### 6.3.2. Check the number of names
+
+```{r}
+common_names_1 <- intersect(merged_data_1$Player_Name_Cleaned, All_RegSs_Per_Games$Player_Name_Cleaned)
+common_names_2 <- intersect(merged_data_1$Player_Name_Cleaned, All_RegSs_Totals$Player_Name_Cleaned)
+common_names_3 <- intersect(All_RegSs_Per_Games$Player_Name_Cleaned, All_RegSs_Totals$Player_Name_Cleaned)
+
+# Output the number of matching names
+cat("merged_data_1 has", length(unique(merged_data_1$Player_Name_Cleaned)), "names.\n")
+cat("All_RegSs_Per_Games has", length(unique(All_RegSs_Per_Games$Player_Name_Cleaned)), "names.\n")
+cat("All_RegSs_Totals has", length(unique(All_RegSs_Totals$Player_Name_Cleaned)), "names.\n")
+cat("merged_data_1 and All_RegSs_Per_Games have", length(common_names_1), "shared names.\n")
+cat("merged_data_1 and All_RegSs_Totals have", length(common_names_2), "shared names.\n")
+cat("All_RegSs_Per_Games and All_RegSs_Totals have", length(common_names_3), "shared names.\n")
+```
+
+
+## 6.4. Merge of two performance data
+
+### 6.4.1. Columns that are the same
+
+```{r}
+
+# Find identical column names and exclude key columns
+key_cols <- c("Player", "Age", "Team")
+common_cols <- intersect(setdiff(colnames(All_RegSs_Per_Games), key_cols),
+                         setdiff(colnames(All_RegSs_Totals), key_cols))
+
+# Merge the two data frames, and ensure that the key columns are aligned
+merged_data <- merge(All_RegSs_Per_Games, All_RegSs_Totals, by = key_cols, suffixes = c("_Games", "_Totals"))
+
+# Compare columns with the same name
+comparison_results <- sapply(common_cols, function(col) {
+  # Column names with suffixes for both columns
+  col_games <- paste0(col, "_Games")
+  col_totals <- paste0(col, "_Totals")
+  
+  # Determine if the columns are the same
+  all(merged_data[[col_games]] == merged_data[[col_totals]], na.rm = TRUE)
+})
+
+
+comparison_results
+
+```
+
+### 6.4.2 Select key
+
+#### 6.4.2.1. View Uniqueness
+```{r}
+# Specify the name of the column to extract
+selected_columns <- c("Player", "Age", "Team")  
+
+# Extract as new data frame
+new_df <- All_RegSs_Per_Games[, selected_columns, drop = FALSE]
+
+# Check for duplicate rows in the new data frame
+has_duplicates <- any(duplicated(new_df))
+
+if (has_duplicates) {
+  cat("The new data frame has duplicate rows.\n")
+} else {
+  cat("The new data frame does not have duplicate rows.\n")
+}
+
+# View duplicate rows
+duplicate_rows <- new_df[duplicated(new_df), ]
+cat("Number of duplicate rows:", nrow(duplicate_rows), "\n")
+
+# Get duplicate rows
+duplicate_rows <- new_df[duplicated(new_df) | duplicated(new_df, fromLast = TRUE), ]
+
+# Extract the corresponding rows from the raw data
+matching_rows <- merge(All_RegSs_Per_Games, duplicate_rows, by = selected_columns)
+
+print(matching_rows)
+```
+
+#### 6.4.2.2. Re-clean rows
+
+
+```{r}
+# Marker league_average Row
+matching_rows$is_league_average <- matching_rows$Player == "League Average"
+
+# Group by Player, delete the first row of each group (except League Average)
+matching_rows_filtered <- matching_rows %>%
+  arrange(Player, Season) %>%  # Group by Player and sort Season in ascending order.
+  group_by(Player) %>%
+  filter(is_league_average | row_number() > 1) %>%
+  ungroup()
+
+# Remove rows from All_RegSs_Per_Games that match matching_rows_filtered
+All_RegSs_Per_Games_cleaned <- anti_join(All_RegSs_Per_Games, matching_rows_filtered, 
+                                         by = selected_columns)
+
+
+cat("Number of rows removed:", nrow(All_RegSs_Per_Games) - nrow(All_RegSs_Per_Games_cleaned), "\n")
+cat("Number of rows remaining in All_RegSs_Per_Games_cleaned:", nrow(All_RegSs_Per_Games_cleaned), "\n")
+
+```
+
+
+
+#### 6.4.2.3. Re-check uniqueness
+
+```{r}
+# Extract new data frame
+new_df_1 <- All_RegSs_Per_Games_cleaned[, selected_columns, drop = FALSE]
+
+# Check for duplicate rows in the new data frame
+has_duplicates_1 <- any(duplicated(new_df_1))
+
+# Print results
+if (has_duplicates_1) {
+  cat("The new data frame has duplicate rows.\n")
+} else {
+  cat("The new data frame does not have duplicate rows.\n")
+}
+
+# View duplicate rows
+duplicate_rows_1 <- new_df_1[duplicated(new_df_1), ]
+cat("Number of duplicate rows:", nrow(duplicate_rows_1), "\n")
+```
+
+#### 6.4.2.4. Repeat operation on total data
+
+
+```{r}
+# 
+new_df_2 <- All_RegSs_Totals[, selected_columns, drop = FALSE]
+
+# 
+has_duplicates_2 <- any(duplicated(new_df_2))
+
+# 
+if (has_duplicates_2) {
+  cat("The new data frame has duplicate rows.\n")
+} else {
+  cat("The new data frame does not have duplicate rows.\n")
+}
+
+# 
+duplicate_rows_2 <- new_df_2[duplicated(new_df_2), ]
+cat("Number of duplicate rows:", nrow(duplicate_rows_2), "\n")
+
+# 
+duplicate_rows_2 <- new_df_2[duplicated(new_df_2) | duplicated(new_df_2, fromLast = TRUE), ]
+
+# 
+matching_rows_2 <- merge(All_RegSs_Totals, duplicate_rows_2, by = selected_columns)
+
+# 
+print(matching_rows_2)
+```
+
+```{r}
+# 
+matching_rows_2$is_league_average <- matching_rows_2$Player == "League Average"
+
+# 
+matching_rows_filtered_2 <- matching_rows_2 %>%
+  arrange(Player, Season) %>%  # 
+  group_by(Player) %>%
+  filter(is_league_average | row_number() > 1) %>%
+  ungroup()
+
+# 
+All_RegSs_Totals_cleaned <- anti_join(All_RegSs_Totals, matching_rows_filtered_2, 
+                                         by = selected_columns)
+
+# 
+cat("Number of rows removed:", nrow(All_RegSs_Totals) - nrow(All_RegSs_Totals_cleaned), "\n")
+cat("Number of rows remaining in All_RegSs_Totals_cleaned:", nrow(All_RegSs_Totals_cleaned), "\n")
+
+```
+
+```{r}
+# 
+new_df_3 <- All_RegSs_Totals_cleaned[, selected_columns, drop = FALSE]
+
+# 
+has_duplicates_3 <- any(duplicated(new_df_3))
+
+# 
+if (has_duplicates_3) {
+  cat("The new data frame has duplicate rows.\n")
+} else {
+  cat("The new data frame does not have duplicate rows.\n")
+}
+
+# 
+duplicate_rows_3 <- new_df_3[duplicated(new_df_3), ]
+cat("Number of duplicate rows:", nrow(duplicate_rows_3), "\n")
+```
+
+#### 6.4.2.5. Test for key identity
+
+```{r}
+# Sort by name in ascending order and reset row numbers
+new_df_1 <- new_df_1 %>%
+  arrange(Player) 
+
+# Reset line number
+row.names(new_df_1) <- NULL
+
+# Sort by name in ascending order and reset row numbers
+new_df_3 <- new_df_3 %>%
+  arrange(Player)  # Ascending name order
+
+row.names(new_df_3) <- NULL
+
+#new_df_3 == new_df_1
+```
+
+### 6.4.3. Merge!!!
+
+```{r}
+# Define the columns to be processed
+columns_to_rename <- c("Rk","FG", "FGA", "FG.", "FT", "FTA", "FT.", "TRB", "AST", 
+                       "PF", "PTS", "MP", "GS", "ORB", "DRB", 
+                       "STL", "BLK", "TOV", "X3P", "X3PA", "X3P.", "X2P", 
+                       "X2PA", "X2P.", "eFG.")
+
+# Add suffix to column names of All_RegSs_Totals_cleaned
+All_RegSs_Totals_cleaned <- All_RegSs_Totals_cleaned %>%
+  rename_with(~ paste0(., "_Ttls"), all_of(columns_to_rename))
+
+# Add suffix to column name of All_RegSs_Per_Games_cleaned
+All_RegSs_Per_Games_cleaned <- All_RegSs_Per_Games_cleaned %>%
+  rename_with(~ paste0(., "_PrGs"), all_of(columns_to_rename))
+
+```
+
+```{r}
+All_RegSs_to_merge <- All_RegSs_Per_Games_cleaned %>% 
+  select(-Pos, -G, -Season, -Player_Name_Cleaned)
+
+
+# Join by key to merge only specified columns
+merged_data <- All_RegSs_Totals_cleaned %>%
+  left_join(
+    All_RegSs_to_merge,
+    by = c("Player", "Age", "Team")
+  )
+
+print(merged_data)
+```
+
+# 7. Merge total data
+
+## 7.1. Unify team names
+
+```{r}
+# Creating a mapping table
+team_mapping <- data.frame(
+  Team_short = c("ATL", "BAL", "BOS", "BRK", "CHA", "CHI", "CLE", "DAL", "DEN", "DET",
+                 "GSW", "HOU", "IND", "LAC", "LAL", "MEM", "MIA", "MIL", "MIN", "NOP",
+                 "NYK", "OKC", "ORL", "PHI", "PHO", "POR", "SAC", "SAS", "TOR", "UTA",
+                 "WAS", "WSB", "SEA", "VAN"),
+  Team_full = c("Hawks", "Bullets", "Celtics", "Nets", "Hornets", "Bulls", "Cavaliers", "Mavericks", 
+                "Nuggets", "Pistons", "Warriors", "Rockets", "Pacers", "Clippers", "Lakers", 
+                "Grizzlies", "Heat", "Bucks", "Timberwolves", "Pelicans", "Knicks", "Thunder", 
+                "Magic", "76ers", "Suns", "Blazers", "Kings", "Spurs", "Raptors", "Jazz", 
+                "Wizards", "Bullets", "Sonics", "Grizzlies")
+)
+
+```
+
+
+```{r}
+# Replace abbreviated team names with full team names
+merged_data$Team_full <- team_mapping$Team_full[match(merged_data$Team, team_mapping$Team_short)]
+
+```
+
+## 7.2. merged_data retains only the requirement columns
+```{r}
+merged_data_2 <- merged_data %>% 
+  select(-Pos,
+         -Player,
+         -Team)
+```
+
+
+## 7.3. Final merging
+
+```{r}
+# Perform a merge operation
+merged_data_all <- merged_data_1 %>%
+  left_join(
+    merged_data_2,
+    by = c(
+      "Player_Name_Cleaned" = "Player_Name_Cleaned",
+      "age_at_injury" = "Age",
+      "Team" = "Team_full"
+    )
+  )
+```
+
+
+## 7.4. Write out the data
+
+```{r}
+# write.csv(merged_data_all, "merged_data_all.csv", row.names = FALSE)
+
+```
+
+
+
+
+
+
+
+
+

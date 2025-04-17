@@ -26,14 +26,14 @@ data_cor_matrix <- data %>%
          DefensiveAggressiveness, TurnoverRate, FoulRate
   )
 cor_matrix <- cor(data_cor_matrix, use = "pairwise.complete.obs")
-# 假设 cor_matrix 是已经计算好的相关性矩阵
+
 corrplot(cor_matrix, 
          method = "color", 
          type = "upper", 
-         tl.col = "black",   # 标签颜色
-         tl.srt = 45,        # 标签旋转角度
-         tl.cex = 0.5,       # 标签文字大小（调整为 0.8 倍大小）
-         addCoef.col = "black",       # 在格子中显示相关系数
+         tl.col = "black",  
+         tl.srt = 45,        
+         tl.cex = 0.5,       
+         addCoef.col = "black",       
          number.cex = 0.6, 
 )
 
